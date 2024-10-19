@@ -1,0 +1,29 @@
+- hosts: all
+  become: yes
+  remote_user: ubuntu
+  tasks:
+    - name: Update apt cache and upgrade packages
+      apt:
+        update_cache: yes
+        upgrade: 'dist'
+        autoremove: yes
+
+    - name: Set release upgrade prompt to LTS
+      ini_file:
+        path: /etc/update-manager/release-upgrades
+        section: Default
+        option: Prompt
+        value: "lts"
+        backup: yes
+
+    - name: Perform release upgrade to Ubuntu LTS
+      command: do-release-upgrade -f DistUpgradeViewNonInteractive
+      register: upgrade_result
+      ignore_errors: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Reboot if required
+      reboot:
+        reboot_timeout: 90
+      when: upgrade_result is changed
