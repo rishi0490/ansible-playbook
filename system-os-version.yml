@@ -1,0 +1,78 @@
+---
+- name: Gather server information and save to a single CSV
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Determine the cloud provider
+      shell: |
+        if curl -s -f http://169.254.169.254/latest/meta-data/instance-id >/dev/null; then
+            echo "AWS"
+        elif curl -s -H Metadata:true "http://169.254.169.254/metadata/instance?api-version=2021-01-01" >/dev/null; then
+            echo "Azure"
+        else
+            echo "Unknown"
+        fi
+      register: provider_output
+
+    - name: Debug provider output
+      debug:
+        msg: "Cloud Provider: {{ provider_output.stdout }}"
+
+    - name: Check if AWS region is available
+      shell: curl -s http://169.254.169.254/latest/meta-data/placement/region
+      ignore_errors: yes
+      register: aws_region_output
+      when: provider_output.stdout == "AWS"
+
+    - name: Check if Azure region is available
+      shell: |
+        curl -H "Metadata: true" -s "http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text"
+      ignore_errors: yes
+      register: azure_region_output
+      when: provider_output.stdout == "Azure"
+
+    - name: Set AWS region if valid
+      set_fact:
+        cloud_region: "{{ aws_region_output.stdout | default('N/A') }}"
+      when: provider_output.stdout == "AWS"
+
+    - name: Set Azure region if valid
+      set_fact:
+        cloud_region: "{{ azure_region_output.stdout | default('N/A') }}"
+      when: provider_output.stdout == "Azure"
+
+    - name: Get hostname
+      command: hostname
+      register: hostname_output
+
+    - name: Get OS version details from /etc/os-release
+      shell: |
+        if [ -f /etc/os-release ]; then
+            . /etc/os-release && echo "$NAME $VERSION_ID"
+        else
+            echo "Unknown"
+        fi
+      register: os_version_output
+      ignore_errors: yes
+
+    - name: Check if CSV file exists
+      stat:
+        path: /Users/rishisingh/prod/patching/system-os-version-list.csv
+      register: csv_file
+
+    - name: Add CSV headers (if file is empty or does not exist)
+      lineinfile:
+        path: /Users/rishisingh/prod/patching/system-os-version-list.csv
+        line: "Hostname,Cloud Provider,Region,OS Version"
+        create: yes
+        insertafter: BOF
+      when: not csv_file.stat.exists or csv_file.stat.size == 0
+      delegate_to: localhost
+
+    - name: Add server information to a CSV file
+      lineinfile:
+        path: /Users/rishisingh/prod/patching/system-os-version-list.csv
+        line: "{{ hostname_output.stdout }},{{ provider_output.stdout }},{{ cloud_region | default('N/A') }},{{ os_version_output.stdout | default('N/A') }}"
+        create: yes
+        insertafter: EOF
+      delegate_to: localhost
