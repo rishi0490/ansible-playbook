@@ -1,0 +1,79 @@
+- name: Install Trivy and scan Docker images into /home/ubuntu/trivy/<timestamp>
+  hosts: all
+  become: true
+  vars_files:
+    - slack-channel-vars.yml  # Include the vars file to use the variables
+  vars:
+    base_dir: /home/ubuntu/trivy
+    trivy_version: "0.61.1"
+    trivy_deb: "trivy_0.61.1_Linux-64bit.deb"
+    timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d-%H-%M') }}"
+    output_dir: "{{ base_dir }}/{{ timestamp }}"
+    cacheable: yes
+    python_script: "/home/ubuntu/trivy/ansible-trivy-pythonscript.py"  # Path to the Python script on the server
+    SLACK_BOT_TOKEN: "xoxb-589145010323-77713"
+    SLACK_CHANNEL: "C07NB"
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/services"
+
+  tasks:
+    - name: Ensure prerequisites are installed
+      apt:
+        name:
+          - wget
+        state: present
+
+    - name: Download Trivy .deb file for AMD64
+      get_url:
+        url: "https://github.com/aquasecurity/trivy/releases/download/v{{ trivy_version }}/{{ trivy_deb }}"
+        dest: "/home/ubuntu/{{ trivy_deb }}"
+        mode: '0644'
+
+    - name: Install Trivy using dpkg
+      apt:
+        deb: "/home/ubuntu/{{ trivy_deb }}"
+
+    - name: Remove old Trivy .deb file if exists
+      file:
+        path: "/home/ubuntu/trivy_0.41.0_Linux-amd64.deb"
+        state: absent    
+
+    - name: Create base directory
+      file:
+        path: "{{ base_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Create timestamped subdirectory
+      file:
+        path: "{{ output_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Run Trivy scan on running Docker container images
+      shell: |
+        for image in $(docker ps -a | awk 'NR>1 {print $2}' | sort | uniq); do
+          safe_name=$(echo "$image" | sed 's|/|-|g; s|:|-|g')
+          filename="${safe_name}_{{ timestamp }}.txt"
+          echo "Scanning $image -> $filename"
+          trivy image --ignore-unfixed --timeout 30m "$image" > "{{ output_dir }}/$filename"
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Copy the Python script to the Trivy directory
+      copy:
+        src: /Users/rishisingh/prod/patching/ansible-trivy-pythonscript.py # Adjust the local path to where your Python script is located
+        dest: "{{ python_script }}"
+        mode: '0755'
+
+    - name: Run Python script to process Trivy scan results and send to Slack
+      environment:
+        SLACK_BOT_TOKEN: "{{ SLACK_BOT_TOKEN }}"
+        SLACK_CHANNEL: "{{ SLACK_CHANNEL }}"
+        SLACK_WEBHOOK_URL: "{{ SLACK_WEBHOOK_URL }}"
+      command: python3 "{{ python_script }}"  
+     
