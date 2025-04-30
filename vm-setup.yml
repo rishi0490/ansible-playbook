@@ -1,0 +1,79 @@
+---
+- name: Configure new VM
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Update and Upgrade APT Packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - zsh
+        state: present
+
+    - name: Change default shell to Zsh for the user
+      user:
+        name: ubuntu
+        shell: /bin/zsh
+
+    - name: Ensure Zsh is installed and configured
+      shell: chsh -s $(which zsh) ubuntu
+      args:
+        executable: /bin/bash
+
+
+
+    - name: Ensure .zshrc exists
+      file:
+        path: "/home/ubuntu/.zshrc"
+        state: touch
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Copy default .zshrc if empty
+      copy:
+        src: /etc/zsh/newuser.zshrc.recommended
+        dest: "/home/ubuntu/.zshrc"
+        remote_src: yes
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Update .zshrc theme to agnoster
+      lineinfile:
+        path: "/home/ubuntu/.zshrc"
+        regexp: '^ZSH_THEME='
+        line: 'ZSH_THEME="agnoster"'
+        create: yes
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Apply .zshrc changes
+      shell: source /home/ubuntu/.zshrc
+      args:
+        executable: /bin/zsh
+
+        
+    - name: Create required directories inside /home/ubuntu/
+      file:
+        path: "/home/ubuntu/{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      loop:
+        - containers
+        - projects
+        - mount
+
+    - name: Restart Docker service
+      systemd:
+        name: docker
+        state: restarted
